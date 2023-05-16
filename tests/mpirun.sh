@@ -1,0 +1,1 @@
+JAX_ENABLE_X64=True NVSHMEM_BOOTSTRAP=MPI mpirun --allow-run-as-root -n 2 python3 ./fft_test.py

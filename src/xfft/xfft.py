@@ -1,7 +1,7 @@
 from functools import partial
 
 import jax
-from jax._src.sharding import NamedSharding
+from jax._src.sharding_impls import NamedSharding
 from jax.experimental.custom_partitioning import custom_partitioning
 from fft_common import Dir
 
@@ -12,9 +12,9 @@ def _fft(x, dist, dir):
     forward or backward direction """
 
     if dir == Dir.FWD:
-        return jax.numpy.fft.fftn(x, axes=dist.fft_axes(len(x.shape)))
+        return jax.numpy.fft.rfftn(x, axes=dist.fft_axes(len(x.shape)))
     else:
-        return jax.numpy.fft.ifftn(x, axes=dist.fft_axes(len(x.shape)))
+        return jax.numpy.fft.irfftn(x, axes=dist.fft_axes(len(x.shape)))
 
 
 def _supported_sharding(sharding, dist):

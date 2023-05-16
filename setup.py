@@ -35,14 +35,13 @@ class CMakeBuildExt(build_ext):
             "-DPython_LIBRARIES={}".format(cmake_python_library),
             "-DPython_INCLUDE_DIRS={}".format(cmake_python_include_dir),
             "-DCMAKE_CUDA_ARCHITECTURES=70;80;90",
-            "-DNVSHMEM_HOME={}".format(HERE + "/nvshmem"),
-            "-DCUFFTMP_HOME={}".format(HERE + "/cufftmp"),
             "-DCMAKE_BUILD_TYPE={}".format(
                 "Debug" if self.debug else "Release"
             ),
             "-DCMAKE_PREFIX_PATH={}".format(pybind11.get_cmake_dir()),
         ]
-
+        
+        print(cmake_args)
         os.makedirs(self.build_temp, exist_ok=True)
         subprocess.check_call(
             ["cmake", f"{HERE}/src/cufftmp_jax/"] + cmake_args, cwd=self.build_temp
@@ -87,7 +86,7 @@ setup(
     packages=find_packages("src"),
     package_dir={"": "src"},
     include_package_data=True,
-    install_requires=["jax[cuda]", "jaxlib"],
+    # install_requires=["jax[cuda]", "jaxlib"],
     ext_modules=extensions,
     cmdclass={"build_ext": CMakeBuildExt},
 )

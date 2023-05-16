@@ -4,11 +4,12 @@ project(cufftmp_jax LANGUAGES CXX CUDA)
 find_package(Python COMPONENTS Interpreter Development REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 
-include_directories(${CMAKE_CURRENT_LIST_DIR}/lib)
+find_package(NVHPC REQUIRED COMPONENTS MATH MPI)
 
-message(STATUS "Using ${NVSHMEM_HOME} for NVSHMEM_HOME and ${CUFFTMP_HOME} for CUFFTMP_HOME")
-include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES} ${CUFFTMP_HOME}/include ${NVSHMEM_HOME}/include)
-link_directories(${CUFFTMP_HOME}/lib ${NVSHMEM_HOME}/lib)
+# Adding a bunch of inputs
+message(STATUS "Using ${NVHPC_ROOT_DIR} for NVHPC_ROOT_DIR")
+include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES} "${NVHPC_ROOT_DIR}/math_libs/include" "${NVHPC_ROOT_DIR}/comm_libs/nvshmem/include" "${NVHPC_ROOT_DIR}/math_libs/include/cufftmp" "${NVHPC_HOME_DIR}/comm_libs/nccl/include")
+link_directories("${NVHPC_ROOT_DIR}/math_libs/lib64 ${NVHPC_ROOT_DIR}/comm_libs/nvshmem/lib" )
 
 pybind11_add_module(gpu_ops 
     ${CMAKE_CURRENT_LIST_DIR}/lib/kernels.cu 

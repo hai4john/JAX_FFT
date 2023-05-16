@@ -13,15 +13,16 @@ namespace {
 
 pybind11::dict Registrations() {
     pybind11::dict dict;
-    dict["gpu_cufftmp"] = EncapsulateFunction(gpu_cufftmp);
+    dict["gpu_cufftmp_f32"] = EncapsulateFunction(gpu_cufftmp_f32);
+    dict["gpu_cufftmp_f64"] = EncapsulateFunction(gpu_cufftmp_f64);
     return dict;
 }
 
 PYBIND11_MODULE(gpu_ops, m) {
     m.def("registrations", &Registrations);
     m.def("build_cufftmp_descriptor",
-        [](std::int64_t x, std::int64_t y, std::int64_t z, int dist, int dir) { 
-            return PackDescriptor(cufftmpDescriptor{x, y, z, dist, dir}); 
+        [](std::int64_t x, std::int64_t y, std::int64_t z, int rank, int size, int dist, int dir) {
+            return PackDescriptor(cufftmpDescriptor{x, y, z, rank, size, dist, dir});
         }
     );
 }

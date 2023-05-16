@@ -20,6 +20,8 @@ struct cufftmpDescriptor {
     std::int64_t global_x;
     std::int64_t global_y;
     std::int64_t global_z;
+    int rank;
+    int size;
     int distribution;
     int direction;
 };
@@ -27,7 +29,9 @@ struct cufftmpDescriptor {
 /**
  * Generic signature for a custom op with CUDA
  */
-void gpu_cufftmp(cudaStream_t stream, void** buffers, const char* opaque, std::size_t opaque_len);
+void gpu_cufftmp_f32(cudaStream_t stream, void** buffers, const char* opaque, std::size_t opaque_len);
+
+void gpu_cufftmp_f64(cudaStream_t stream, void** buffers, const char* opaque, std::size_t opaque_len);
 
 }  // namespace cufftmp_jax
 

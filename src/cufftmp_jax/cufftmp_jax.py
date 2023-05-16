@@ -10,7 +10,7 @@ from jax.lib import xla_client
 from jax import core, dtypes
 from jax.interpreters import xla, mlir
 from jax.abstract_arrays import ShapedArray
-from jax._src.sharding import NamedSharding
+# from jax._src.sharding_impls import NamedSharding
 from jax.experimental.custom_partitioning import custom_partitioning
 from jaxlib.hlo_helpers import custom_call
 
@@ -27,60 +27,21 @@ xops = xla_client.ops
 # ************
 
 
-def _cufftmp_bind(input, num_parts, dist, dir):
+def _cufftmp_bind(input, num_parts, rank, size, dist, dir):
 
     # param=val means it's a static parameter
     (output,) = _cufftmp_prim.bind(input,
                                    num_parts=num_parts,
+                                   rank=rank,
+                                   size=size,
                                    dist=dist,
                                    dir=dir)
-
-    # scale in INVERSE direction
-    if dir == Dir.INV:
-        fft_dims = dist.fft_shape(input.shape)
-        output = jax.numpy.divide(output, math.prod([
-            jax.numpy.complex64(f) for f in fft_dims
-        ]))
 
     return output
 
 
-def _supported_sharding(sharding, dist):
-    return NamedSharding(sharding.mesh, dist.part_spec)
 
-
-def _partition(arg_shapes,
-               arg_shardings,
-               result_shape,
-               result_sharding,
-               dist,
-               dir):
-
-    """ Describes the required input and output sharding of the op.
-    `arg_shardings` and `result_sharding` are the shardings provided by the
-    user (i.e., in pjit).
-    Returns:
-    - The operation to perform locally on all GPUs
-    - The output sharding
-    - The input sharding """
-
-    return lambda x: _cufftmp_bind(x,
-                                   num_parts=jax.device_count(),
-                                   dist=dist,
-                                   dir=dir), \
-        _supported_sharding(arg_shardings[0], dist.opposite), \
-        [_supported_sharding(arg_shardings[0], dist)]
-
-
-def _infer_sharding_from_operands(arg_shapes,
-                                  arg_shardings,
-                                  result_shape,
-                                  dist,
-                                  dir):
-    return _supported_sharding(arg_shardings[0], dist)
-
-
-def cufftmp(x, dist, dir):
+def cufftmp(x, rank, size, dist, dir):
 
     """Compute the DFT using a JAX+cuFFTMp implementation.
 
@@ -106,21 +67,11 @@ def cufftmp(x, dist, dir):
     """
 
     # cuFFTMp only supports 1 device per proces
-    assert jax.local_device_count() == 1
+    # assert jax.local_device_count() == 1
 
     @custom_partitioning
     def _cufftmp_(x):
-        return _cufftmp_bind(x, num_parts=1, dist=dist, dir=dir)
-
-    _cufftmp_.def_partition(
-        infer_sharding_from_operands=partial(
-            _infer_sharding_from_operands,
-            dist=dist,
-            dir=dir),
-        partition=partial(
-            _partition,
-            dist=dist,
-            dir=dir))
+        return _cufftmp_bind(x, num_parts=1, rank=rank, size=size, dist=dist, dir=dir)
 
     return _cufftmp_(x)
 
@@ -131,57 +82,77 @@ def cufftmp(x, dist, dir):
 
 # Abstract implementation, i.e., return the shape of the output array
 # based on the input array and a number of partitions (ie devices)
-def _cufftmp_abstract(input, num_parts, dist, dir):
-    dtype = dtypes.canonicalize_dtype(input.dtype)
+def _cufftmp_abstract(input, num_parts, rank, size, dist, dir):
+    input_dtype = dtypes.canonicalize_dtype(input.dtype)
     input_shape = input.shape
-    if dist == Dist.SLABS_X:
-        output_shape = (input_shape[0] * num_parts,
-                        input_shape[1] // num_parts,
-                        *input_shape[2:])
-    elif dist == Dist.SLABS_Y:
-        output_shape = (input_shape[0] // num_parts,
-                        input_shape[1] * num_parts,
-                        *input_shape[2:])
-    return (ShapedArray(output_shape, dtype),)
+
+    if dir == Dir.INV:
+        if input_dtype == jax.numpy.complex64:
+            output_dtype = jax.numpy.float32
+        else:
+            output_dtype = jax.numpy.float64
+
+        output_shape = (input_shape[0],
+                        input_shape[1],
+                        2*(input_shape[2]-1))
+    else:
+        if input_dtype == jax.numpy.float32:
+            output_dtype = jax.numpy.complex64
+        else:
+            output_dtype = jax.numpy.complex128
+
+        output_shape = (input_shape[0],
+                        input_shape[1],
+                        (input_shape[2] // 2 + 1))
+
+    return (ShapedArray(output_shape, output_dtype),)
 
 
 # Implementation calling into the C++ bindings
-def _cufftmp_translation(ctx, input, num_parts, dist, dir):
-
-    assert num_parts == jax.device_count()
-
+def _cufftmp_translation(ctx, input, num_parts, rank, size, dist, dir):
     input_type = mlir.ir.RankedTensorType(input.type)
     dims_in = input_type.shape
-    fft_dims = dist.fft_shape(dims_in)
-    dims_out = dist.opposite.slab_shape(fft_dims)
+    f32Type = mlir.ir.F32Type.get()
+    c32Type = mlir.ir.ComplexType.get(mlir.ir.F32Type.get())
+
+    if dir == Dir.INV:
+        if input_type.element_type == c32Type:
+            outType = mlir.ir.F32Type.get()
+            op_name = "gpu_cufftmp_f32"
+        else:
+            outType = mlir.ir.F64Type.get()
+            op_name = "gpu_cufftmp_f64"
+
+        dims_out = (dims_in[0], dims_in[1], 2*(dims_in[2]-1))
+    else:
+        if input_type.element_type == f32Type:
+            outType = mlir.ir.ComplexType.get(mlir.ir.F32Type.get())
+            op_name = "gpu_cufftmp_f32"
+        else:
+            outType = mlir.ir.ComplexType.get(mlir.ir.F64Type.get())
+            op_name = "gpu_cufftmp_f64"
+
+        dims_out = (dims_in[0], dims_in[1], (dims_in[2] // 2 + 1))
+
     output_type = mlir.ir.RankedTensorType.get(
         dims_out,
-        input_type.element_type
+        outType
     )
 
     layout = tuple(range(len(dims_in) - 1, -1, -1))
 
-    if len(fft_dims) == 2:
-        opaque = gpu_ops.build_cufftmp_descriptor(
-            fft_dims[0],
-            fft_dims[1],
-            1,
-            dist._C_enum,
-            dir._C_enum
-        )
-    elif len(fft_dims) == 3:
-        opaque = gpu_ops.build_cufftmp_descriptor(
-            fft_dims[0],
-            fft_dims[1],
-            fft_dims[2],
-            dist._C_enum,
-            dir._C_enum
-        )
-    else:
-        raise ValueError("Unsupported tensor rank; must be 2 or 3")
+    opaque = gpu_ops.build_cufftmp_descriptor(
+        dims_in[0],
+        dims_in[1],
+        dims_in[2],
+        rank,
+        size,
+        dist._C_enum,
+        dir._C_enum
+    )
 
     return [custom_call(
-        "gpu_cufftmp",
+        op_name,
         # Output types
         out_types=[output_type],
         # The inputs:
