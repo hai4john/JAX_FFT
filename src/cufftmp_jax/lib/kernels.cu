@@ -18,7 +18,7 @@ inline void cuda_check(cudaError_t code, const char *file, int line)
 {
     if (code != cudaSuccess) {
         fprintf(stderr,"CUDA_CHECK: %s %s %d\n", cudaGetErrorString(code), file, line);
-        throw std::runtime_error("CUDA error");
+        throw std::runtime_error("cufftmp CUDA error");
     }
 }
 
@@ -27,7 +27,7 @@ inline void nvshmem_check(int code, const char *file, int line)
 {
     if (code != 0) {
         fprintf(stderr,"NVSHMEM_CHECK: %d %s %d\n", code, file, line);
-        throw std::runtime_error("NVSHMEM error");
+        throw std::runtime_error("cufftmp NVSHMEM error");
     }
 }
 
@@ -36,7 +36,7 @@ inline void cufft_check(int code, const char *file, int line, bool abort=true)
 {
     if (code != CUFFT_SUCCESS) {
         fprintf(stderr,"CUFFT_CHECK: %d %s %d\n", code, file, line);
-        throw std::runtime_error("CUFFT error");
+        throw std::runtime_error("cufftmp CUFFT error");
     }
 }
 
@@ -56,8 +56,8 @@ struct plan_cache {
     const std::int64_t nx, ny, nz;
     const std::int64_t count;
     
-    cufftHandle plan_inplace_to_shuffled;
-    cufftHandle plan_shuffled_to_inplace;
+    cufftHandle plan_r2c;
+    cufftHandle plan_c2r;
 
     T* inout_d;
     T* scratch_d;
@@ -71,8 +71,7 @@ struct plan_cache {
                T* inout_d,
                T* scratch_d)
         : nx(nx), ny(ny), nz(nz), count(count), 
-          plan_inplace_to_shuffled(plan_r2c), 
-          plan_shuffled_to_inplace(plan_c2r),
+          plan_r2c(plan_r2c), plan_c2r(plan_c2r),
           inout_d(inout_d), scratch_d(scratch_d) {};
 
     static std::unique_ptr<plan_cache> create(std::int64_t nx, std::int64_t ny, std::int64_t nz, int size) {
@@ -82,7 +81,7 @@ struct plan_cache {
 
         if(nx % size != 0 || ny % size != 0) {
             std::stringstream sstr;
-            sstr << "Invalid configuration; nx = " << nx << " and ny = " << ny << " need to be divisible by the number of PEs = " << size << "\n";
+            sstr << "cufftmp Invalid configuration; nx = " << nx << " and ny = " << ny << " need to be divisible by the number of PEs = " << size << "\n";
             throw std::runtime_error(sstr.str());
         }
 
@@ -144,10 +143,10 @@ struct plan_cache {
 
     ~plan_cache() {
         // The context is already destroyed at this point, so releasing resources is pointless
-        // CUFFT_CHECK(cufftDestroy(plan_inplace_to_shuffled));
-        // CUFFT_CHECK(cufftDestroy(plan_shuffled_to_inplace));
-        // nvshmem_free(inout_d);
-        // nvshmem_free(scratch_d);
+        nvshmem_free(scratch_d);           
+        nvshmem_free(inout_d);
+        CUFFT_CHECK(cufftDestroy(plan_c2r));
+        CUFFT_CHECK(cufftDestroy(plan_r2c));
         // nvshmem_finalize();
     }
 
@@ -195,7 +194,9 @@ inline void apply_cufftmp(cudaStream_t stream, void **buffers, const char *opaqu
         cache = plan_cache<T>::create(nx, ny, nz, size);
     }else {
         if(cache->nx != nx || cache->ny != ny || cache->nz != nz) {
-            throw std::runtime_error("Invalid sizes");
+            //throw std::runtime_error("cufftmp Invalid sizes");
+            cache.reset();      // destroy the cache
+            cache = plan_cache<T>::create(nx, ny, nz, size);        // create new cache
         }
     }
 
@@ -203,10 +204,10 @@ inline void apply_cufftmp(cudaStream_t stream, void **buffers, const char *opaqu
     // CUFFT_FORWARD + CUFFT_XT_FORMAT_INPLACE
     // or CUFFT_INVERSE + CUFFT_XT_FORMAT_INPLACE_SHUFFLED
     if(direction == 0) { 
-            plan = cache->plan_inplace_to_shuffled; 
+            plan = cache->plan_r2c; 
     // Otherwise...
     } else {
-            plan = cache->plan_shuffled_to_inplace;
+            plan = cache->plan_c2r;
     }
 
     /**

@@ -14,20 +14,13 @@ def main():
     nrank = comm.Get_rank()
     nsize = comm.Get_size()
     
-    os.environ["CUDA_VISIBLE_DEVICES"] = "%d" % (nrank)
+    os.environ["CUDA_VISIBLE_DEVICES"] = "%d" % (nrank + 4)
     os.environ["JAX_ENABLE_X64"] = "True"
 
     dist_fft = cufftmp
     # dist_fft = xfft
-
     dist = Dist.create('X')
-    input_shape = (256, 512, 512)
-    # dtype = jnp.complex64
-    dtype = jnp.float64
-    key = jax.random.PRNGKey(nrank)
-    input = jax.random.normal(key, shape=input_shape, dtype=dtype)
-    # input = jnp.ones(shape=input_shape, dtype=dtype)
-    
+
     def fwd(x, rank, size, dist):
         return dist_fft(x, rank, size, dist, Dir.FWD)
 
@@ -46,15 +39,39 @@ def main():
         print(n.shape)
         # print(n)
         # jax.debug.visualize_array_sharding(n)
-        return n
+        return n    
 
+    
+    input_shape = (128, 128, 128)
+    # dtype = jnp.complex64
+    dtype = jnp.float32
+    key = jax.random.PRNGKey(nrank)
+    input = jax.random.normal(key, shape=input_shape, dtype=dtype)
+    # input = jnp.ones(shape=input_shape, dtype=dtype)
+    
     # Warmup
     x = fwd_bwd_bench(input, nrank, nsize).block_until_ready()
     # x = fwd(input, nrank, nsize, dist).block_until_ready()
 
     # error = jnp.sum((input - x) ** 2)
     error = jnp.std(input - x)/jnp.std(input)
-    print(f"误差: {error:.20f}")
+    print(f"1st 误差: {error:.20f}")
+
+    input_shape = (64, 64, 64)
+    # dtype = jnp.complex64
+    dtype = jnp.float64
+    key = jax.random.PRNGKey(nrank)
+    input = jax.random.normal(key, shape=input_shape, dtype=dtype)
+    # input = jnp.ones(shape=input_shape, dtype=dtype)
+    
+    # Warmup
+    x = fwd_bwd_bench(input, nrank, nsize).block_until_ready()
+    # x = fwd(input, nrank, nsize, dist).block_until_ready()
+
+    # error = jnp.sum((input - x) ** 2)
+    error = jnp.std(input - x)/jnp.std(input)
+    print(f"2nd 误差: {error:.20f}")
+
     # print(x)
 
 def test_main(): 
